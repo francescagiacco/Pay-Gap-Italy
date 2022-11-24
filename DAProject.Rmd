@@ -1,0 +1,178 @@
+---
+title: "Data Analysis Project"
+author: "Francesca Giacco"
+date: "2022-11-22"
+output: html_document
+---
+
+# Outline 
+
+- summary statistics of gender pay gap in the EU - done! 
+- Isolating Italy, adding more data 
+- linear models - regressions with more variables 
+- time series analysis - prediction of next years 
+
+GENDER PAYGAP
+with OECD data 2017 + World Bank data 
+
+
+```{r}
+#load necessary packages 
+library(tidyverse)
+library(tsibble)
+library(fable)
+library(tsibbledata)
+library(eurostat)
+library(plotly)
+```
+
+# Gender Pay Gap in Europe 
+```{r}
+#open dataset
+dataset<- read_csv("Hertie_gender-wage-gap-oecd_FALL2022.csv") %>% 
+          rename(
+          country="Entity", 
+          gap="Gender wage gap (OECD 2017)",
+          year="Year", 
+          code="Code")
+
+#eu 
+a<-eu_countries$name 
+
+
+eu0<- dataset$country %in% a 
+eu0
+
+
+#filter dataset
+dfeu<- dataset %>%
+       mutate(eu= eu0) %>%
+       filter(eu==TRUE) %>% 
+       filter(year >1979) %>% 
+       mutate(decade= 
+             ifelse (year <1990, 1980,
+             ifelse (year <2000, 1990,
+             ifelse (year <2010, 2000,
+             ifelse (year<2020, 2010, 2020)))))
+
+head(dfeu)
+
+#plot for all EU countries, per year
+
+fig1 <- plot_ly(dfeu, x = ~year, y = ~gap, color = ~country) 
+fig1 <- fig1 %>% add_lines()
+fig1 
+
+avg_eu<-dfeu %>%  group_by(year) %>%  
+                  summarise(round(mean(gap))) %>% 
+                  rename(gap="round(mean(gap))")
+
+
+fig2<-  plot_ly(avg_eu, x = ~year, y = ~gap) 
+fig2 <- fig2 %>% add_lines()
+fig2
+
+
+
+
+```
+
+Overall,  it is possible to see that the general tendency is that the gap is progressively reducing among the EU countries, with a few exceptions like Denmark and Finland. 
+
+The average gender gap in the EU has decreased, but from a first look it seems that it has increased in 2015 and 2016. However, having a closer look at the data, we can also see that very few countries have data for 2015 and 2016 so it is better not to reach conclusions from this plot. Indeed, Finland and Portugal are among the states with 2015-2016 data  available and are also among the countries with the highest gap. 
+```{r}
+
+e<- dfeu %>%  filter(year>2014) 
+e
+```
+The gender way gap is problematic for several reasons (add - inequality, dependence on man, social norms and stereotypes ) 
+These data is useful to understand the general trend but to tackle the problem it is necessary to understand what the causes of such gaps are. To do that, it is easier to focus on a more local level, as several factors play a crucial role in determining the gender gap. 
+Moreover, even if the data has been collected in a uniform way across countries, the gender gap value is not enough to compare countries and draw conclusion. Indeed, a low gender gap might be considered a huge achievement but it might as well mask other problems. For example, in the extreme case that only 1 woman was working and earning as much as the richest man, the gender gap would be 0, but it would not mean that there is no problem. The Italian case falls under this second category: indeed, the wage gap is low but the real problem is the participation of women into the labor market. 
+
+For these reasons I will proceed only with Italy. 
+
+- gender pay gap per decile
+- 
+- paid/ unpaid work of women
+
+https://databank.worldbank.org/source/world-development-indicators 
+
+```{r}
+#add data to the dataset 
+#leftjoin
+
+add<- read_csv("dev_data.csv")
+
+for ( col in 1:ncol(add)){
+    colnames(add)[col] <-  sub(" [.*]", "", colnames(add)[col])
+}
+
+head(add)
+
+#filter and preprocess 
+
+ita <- dfeu %>%  
+      filter(country== "Italy")# | Entity=="Germany")  
+ita
+      
+
+
+#colnames(ita)
+```
+
+Exploratory analysis 
+```{r}
+
+
+ggplot(ita, aes(x=year, y=gap)) + geom_line()
+
+
+#tendency in the decade
+f<- ita %>% group_by(decade)%>%
+       summarise(mean=round(mean(gap)))
+
+
+
+ggplot(f, aes(x=decade, y=mean)) + geom_line()
+
+
+
+```
+
+Prediction: 
+use linear model vs arima to predict the last years 
+
+```{r}
+#create tsibble object
+
+tita<- tsibble(ita, 
+            index=year, 
+            key=gap)
+
+
+
+itge<- dfeu %>%  select("country", "year", "gap")
+duplicates(itge)
+teu<- tsibble(itge, 
+            index=year, 
+            key=gap
+              )
+
+
+g<- dfeu%>%
+  filter(country == c("Italy", "Germany")) %>%
+  autoplot(gap) +
+  labs(y = "Gender Wage Gap", title = "Gender Wage Gap for Italy and Germany ")
+
+
+fit <- dfeu %>%
+  filter(country == c("Italy","Germany"),
+         year < 2010) %>% 
+  model(arima = ARIMA(gap),
+        lm = TSLM(gap~ trend())
+        )
+
+glance(fit)
+```
+
+
