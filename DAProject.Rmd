@@ -6,17 +6,17 @@ output: html_document
 ---
 
 # Outline 
-
-- summary statistics of gender pay gap in the EU - done! 
+- introduction
+- summary statistics of gender pay gap in the EU
 - Isolating Italy, adding more data 
-- linear models - regressions with more variables 
-- time series analysis - prediction of next years 
+- linear models - regressions with 1 variable 
+- multivariate regressions more variables 
+- conclusions 
 
-GENDER PAYGAP
-with OECD data 2017 + World Bank data 
+# GENDER PAYGAP
+Data : OECD data (2017) + World Bank data 
 
-
-```{r}
+```{r, eco=FALSE}
 #load necessary packages 
 library(tidyverse)
 library(tsibble)
@@ -24,6 +24,10 @@ library(fable)
 library(tsibbledata)
 library(eurostat)
 library(plotly)
+library(janitor)
+library(TTR)
+library(feasts)
+library(wbstats)
 ```
 
 # Gender Pay Gap in Europe 
@@ -36,12 +40,11 @@ dataset<- read_csv("Hertie_gender-wage-gap-oecd_FALL2022.csv") %>%
           year="Year", 
           code="Code")
 
+
 #eu 
 a<-eu_countries$name 
-
-
 eu0<- dataset$country %in% a 
-eu0
+
 
 
 #filter dataset
@@ -55,12 +58,12 @@ dfeu<- dataset %>%
              ifelse (year <2010, 2000,
              ifelse (year<2020, 2010, 2020)))))
 
-head(dfeu)
+head(dfeu, 5)
 
 #plot for all EU countries, per year
 
 fig1 <- plot_ly(dfeu, x = ~year, y = ~gap, color = ~country) 
-fig1 <- fig1 %>% add_lines()
+fig1 <- fig1 %>% add_lines() 
 fig1 
 
 avg_eu<-dfeu %>%  group_by(year) %>%  
@@ -72,107 +75,209 @@ fig2<-  plot_ly(avg_eu, x = ~year, y = ~gap)
 fig2 <- fig2 %>% add_lines()
 fig2
 
-
-
-
 ```
 
 Overall,  it is possible to see that the general tendency is that the gap is progressively reducing among the EU countries, with a few exceptions like Denmark and Finland. 
 
 The average gender gap in the EU has decreased, but from a first look it seems that it has increased in 2015 and 2016. However, having a closer look at the data, we can also see that very few countries have data for 2015 and 2016 so it is better not to reach conclusions from this plot. Indeed, Finland and Portugal are among the states with 2015-2016 data  available and are also among the countries with the highest gap. 
 ```{r}
-
 e<- dfeu %>%  filter(year>2014) 
-e
+head(e, 5)
+
 ```
-The gender way gap is problematic for several reasons (add - inequality, dependence on man, social norms and stereotypes ) 
-These data is useful to understand the general trend but to tackle the problem it is necessary to understand what the causes of such gaps are. To do that, it is easier to focus on a more local level, as several factors play a crucial role in determining the gender gap. 
+The gender way gap is problematic for several reasons. Indeed it is a symptom of gender inequality. Gender pay gap is both cause and consequence of increased dependence of women on men. It reinforces stereotypes and social norms. 
+Indeed it is positive to see that in Europe the gender wage gap has decreased, however, to tackle the problem it is necessary to understand what the causes of such gaps are. To do that, it is easier to focus on a more local level, as several factors play a crucial role in determining the gender gap. 
 Moreover, even if the data has been collected in a uniform way across countries, the gender gap value is not enough to compare countries and draw conclusion. Indeed, a low gender gap might be considered a huge achievement but it might as well mask other problems. For example, in the extreme case that only 1 woman was working and earning as much as the richest man, the gender gap would be 0, but it would not mean that there is no problem. The Italian case falls under this second category: indeed, the wage gap is low but the real problem is the participation of women into the labor market. 
 
-For these reasons I will proceed only with Italy. 
-
-- gender pay gap per decile
-- 
-- paid/ unpaid work of women
-
-https://databank.worldbank.org/source/world-development-indicators 
+For these reasons I will proceed only with Italy. Here I subset the dataset. The period available is from 1986 to 2014
 
 ```{r}
-#add data to the dataset 
-#leftjoin
-
-add<- read_csv("dev_data.csv")
-
-for ( col in 1:ncol(add)){
-    colnames(add)[col] <-  sub(" [.*]", "", colnames(add)[col])
-}
-
-head(add)
-
+#subset the dataframe ton keep only Italy 
 #filter and preprocess 
-
 ita <- dfeu %>%  
       filter(country== "Italy")# | Entity=="Germany")  
-ita
-      
+head(ita)
 
-
-#colnames(ita)
 ```
+I will proceed with some explanatory analysis to look closer at how the gender wage gap looks like in Italy 
+
 
 Exploratory analysis 
 ```{r}
+fig3<- plot_ly(ita, x=~year, y=~gap) %>% 
+  add_lines()
+fig3
+```
+Here it is possible to see that over the years the income gap has decreased. However there have been some spikes, for example in 1995. Again, in 2008 there is a sharp increase in wage which then remains quite high until it falls in 2012. This for example could be correlated with the economic crisis. I will check for possible explanations later, when I will add some covariates to the dataset and run some regressions. 
 
+I also grouped the years by decade and plotted the results again: 
 
-ggplot(ita, aes(x=year, y=gap)) + geom_line()
-
-
+```{r}
 #tendency in the decade
 f<- ita %>% group_by(decade)%>%
        summarise(mean=round(mean(gap)))
 
 
-
-ggplot(f, aes(x=decade, y=mean)) + geom_line()
-
-
+fig4<- plot_ly(f, x=~decade, y=~mean) %>% 
+  add_lines()
+fig4
 
 ```
+Here I try the SMA model : 
+```{r}
+#build timeseries 
+gap_series<- ts(ita$gap, start=1974, end=2014, frequency=1)
+gap_series
 
-Prediction: 
-use linear model vs arima to predict the last years 
+gap_sma<- SMA(gap_series, n=2)
+plot.ts(gap_sma)
+
+#decompose(gap_series, type="multiplicative") - does not work because only one value per year
+
+```
+# Linear Regression
+Now that we have seen the trend, it would be interesting to see if the increase or decrease of the gap can be explained by some other factor. For this reason, I added some additional information, taking data from the World Bank database. 
+
+
+I added the following information: fertility rate, per capita GDP, GDP growth, total population, female labor force participation. 
+```{r eco=FALSE}
+#add data to the dataset 
+#load data 
+#add<- read_csv("dev_data.csv")
+
+
+#clean header
+#for ( col in 1:ncol(add)){
+#   colnames(add)[col] <-  sub("\\[([A-Z])+([0-9])+]", "", colnames(add)[col])
+#}
+
+#select columns
+#add<- add %>%  
+#      subset (select = -c(1,4))
+
+#head(add)
+```
+
 
 ```{r}
-#create tsibble object
+wb_search("gdp per capita")
 
-tita<- tsibble(ita, 
-            index=year, 
-            key=gap)
+world_bank_dat <- wb_data(c("SP.DYN.TFRT.IN", "SM.POP.NETM", "SP.POP.TOTL", "NY.GDP.MKTP.KD.ZG", "NY.GDP.PCAP.CD", "SL.TLF.CACT.FE.ZS"), country="Italy")
 
 
 
-itge<- dfeu %>%  select("country", "year", "gap")
-duplicates(itge)
-teu<- tsibble(itge, 
-            index=year, 
-            key=gap
-              )
+#join dataframes 
+new<-world_bank_dat %>% 
+  right_join(
+    ita, by = c("date" = "year", "country")
+  )
 
 
-g<- dfeu%>%
-  filter(country == c("Italy", "Germany")) %>%
-  autoplot(gap) +
-  labs(y = "Gender Wage Gap", title = "Gender Wage Gap for Italy and Germany ")
+#remove years I do not need 
+new<- new %>% filter(date>=1984) %>% 
+  select(-c(1:2))
 
+#change column names 
+colnames(new)<- c("country",  "date", "gdp_g", "gdpPercap", "lf_r", "net_migr", "fert_rate",  "popul", "code","gap", "eu", "decade"  )
 
-fit <- dfeu %>%
-  filter(country == c("Italy","Germany"),
-         year < 2010) %>% 
-  model(arima = ARIMA(gap),
-        lm = TSLM(gap~ trend())
-        )
+head(new)
 
-glance(fit)
 ```
+Now, I start the regression trying to check for linear correlation betweeen the wage gap and some variables that I think could explain part of the gender pay gap. 
+
+## Wage gap and per capita GDP
+
+Here i try to regress the wage gap on per capita GDP. The estimated coefficient is negative, however it is scarcely significant. 
+
+```{r}
+#Create the linear regression
+lmgap = lm(gap~gdpPercap, data = new) 
+summary(lmgap)
+
+```
+
+## Wage gap and Fertility rate 
+Now I tried to regress the gender gap on  fertility rate. However, the estimated coefficient is not significant
+```{r}
+lmgap1 = lm(gap~fert_rate, data = new) 
+summary(lmgap1)
+```
+
+## Wage gap and Female labor force participation
+
+Lastly, I tried to regress the wage gap on the female labor force participation. Again, I don't find any significant coefficient. 
+```{r}
+lmgap2 = lm(gap~lf_r, data = new) 
+summary(lmgap2)
+```
+
+
+# Multivariate regression
+
+Here I try to use several covariates to predict the gender wage gap. To choose the best model, I use the function setup_specs, that tries several models at the same time. 
+
+```{r}
+library(specr)
+
+setup_specs(
+  y = "gap",
+  x = c("net_migr", "fert_rate"),
+  model = c("lm", "glm"),
+  controls = c("gdp_g", "popul")
+)
+
+results <- run_specs(
+  df = new, 
+  y = c("gap", "log(gap)"),
+  x = c( "fert_rate", "I(fert_rate^2)", "gdpPercap:fert_rate", "fert_rate:popul", "log(gdpPercap)", "log(fert_rate)", "lf_r", "log(lf_r)"),
+  model = c("lm"),
+  controls = c("gdpPercap", "log(gdpPercap)","log(popul)", "gdpPercap", "log(gdpPercap)")
+)
+```
+
+The plot below shows the results for different models 
+```{r}
+plot_specs(results)
+
+```
+
+From these plots, it is possible to see that the only significant results are achieved when the coefficients are very close to zero. Namely, none of them and the combinations tried seems to explain significantly the gender wage gap  
+
+
+```{r}
+model <- lm(gap ~ log(gdpPercap) + fert_rate + lf_r, data = new)
+
+library(modelsummary)
+
+d<- modelplot(model) 
+d
+
+modelsummary(model, 
+             coef_rename = c("lf_r" = "fem. labor force part. rate",
+                                    "log(gdpPercap)" = "GDP/capita",
+                                    "fert_rate" = "Fertility rate"),
+             gof_omit = "AIC|F|BIC|Log.Lik",
+             coef_omit = "Intercept")
+
+```
+
+
+
+
+
+# Results 
+
+The regression models did not show any significant results. This means that the covariates chosen are not able to explain the existence of the gender gap in Italy.  Probably the way gap needs to be explored further considering more variables such as ones concerning social norms, education, position of women in the highest decile of the income distribution. It would also be interesting to include data differentiating between men and women. 
+
+Moreover, it would be useful to have data for more years. For Italy, the available data was limited to less than 15 observations, which does not allow to do meaningful regressions. 
+
+
+
+Disclaimer: I would have loved to explore further and do some time series analysis but the workload of the last few weeks left me with very little time to research any further. 
+
+
+
+
+
 
 
